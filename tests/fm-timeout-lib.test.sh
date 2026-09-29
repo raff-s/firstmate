@@ -64,6 +64,17 @@ test_passes_the_command_status_and_output_through() {
   pass "fm_exec_timed passes a command's status and output through unchanged"
 }
 
+# Stock macOS bash 3.2 has no BASHPID, and the library runs under set -u, so the
+# owner check must read the variable guarded. Unsetting BASHPID reproduces that
+# shell on a bash that normally defines it.
+test_runs_in_a_shell_without_bashpid() {
+  local out rc=0
+  out=$(bash -c 'set -u; unset BASHPID; . "$1/bin/fm-timeout-lib.sh"; PATH=$2 fm_exec_timed 5 1 bash -c "echo no-bashpid-ok"' _ "$ROOT" "$PERL_ONLY" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm_exec_timed failed in a shell without BASHPID (rc=$rc): $out"
+  assert_contains "$out" "no-bashpid-ok" "the command did not run in a shell without BASHPID"
+  pass "fm_exec_timed runs under set -u in a shell without BASHPID"
+}
+
 # A command that honors TERM ends at the bound, long before the grace would
 # have forced it, and is gone afterwards.
 test_term_ends_a_cooperative_command_at_the_bound() {
@@ -109,7 +120,8 @@ test_the_bound_replaces_the_calling_shell() {
     rm -f "$dir/caller" "$dir/parent"
     (
       . "$ROOT/bin/fm-timeout-lib.sh"
-      printf '%s\n' "$BASHPID" > "$dir/caller"
+      # The subshell's own pid, read portably: bash 3.2 has no BASHPID.
+      bash -c 'echo "$PPID" > "$1"' _ "$dir/caller"
       PATH=$path fm_exec_timed 5 1 bash -c 'echo "$PPID" > "$1"' _ "$dir/parent"
     ) || fail "the bounded probe failed under PATH=$path"
     caller=$(cat "$dir/caller")
@@ -211,7 +223,7 @@ test_an_owner_that_dies_during_startup_ends_the_command() {
   PATH=$PERL_ONLY bash -c '
     . "$1/bin/fm-timeout-lib.sh"
     (
-      echo "$BASHPID" > "$2/watchdog"
+      bash -c "echo \"\$PPID\" > \"\$1\"" _ "$2/watchdog"
       while kill -0 "$$" 2>/dev/null; do sleep 0.05; done
       fm_exec_timed 60 1 bash -c "exec sleep 300"
     ) >/dev/null 2>&1 &
@@ -328,6 +340,7 @@ test_run_timed_passes_a_natural_exit_through_a_fired_bound() {
 }
 
 test_passes_the_command_status_and_output_through
+test_runs_in_a_shell_without_bashpid
 test_run_timed_reports_the_bound_when_the_wrapper_records_a_signal_death
 test_run_timed_passes_a_natural_exit_through_a_fired_bound
 test_term_ends_a_cooperative_command_at_the_bound
